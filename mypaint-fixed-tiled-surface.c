@@ -150,3 +150,43 @@ void free_simple_tiledsurf(MyPaintSurface *surface)
     free(self);
 }
 
+
+
+void
+mypaint_fixed_tiled_surface_read_rgba8(MyPaintFixedTiledSurface *self, unsigned char *out_rgba8)
+{
+    if (!self || !out_rgba8) {
+        return;
+    }
+    const int width = self->width;
+    const int height = self->height;
+    const int tile_size_pixels = self->parent.tile_size;
+
+    const size_t rowstride_bytes = (size_t)self->tiles_width * self->tile_size; // bytes per tile row
+
+    for (int y = 0; y < height; ++y) {
+        const int ty = y / tile_size_pixels;
+        const int y_in_tile = y % tile_size_pixels;
+        for (int x = 0; x < width; ++x) {
+            const int tx = x / tile_size_pixels;
+            const int x_in_tile = x % tile_size_pixels;
+
+            const size_t x_offset = (size_t)tx * self->tile_size; // bytes
+            const size_t tile_offset_bytes = (size_t)ty * rowstride_bytes + x_offset; // bytes
+            const uint16_t *tile = self->tile_buffer + tile_offset_bytes / sizeof(uint16_t);
+
+            const size_t pixel_index_in_tile = ((size_t)y_in_tile * (size_t)tile_size_pixels + (size_t)x_in_tile) * 4u;
+
+            const uint16_t r16 = tile[pixel_index_in_tile + 0];
+            const uint16_t g16 = tile[pixel_index_in_tile + 1];
+            const uint16_t b16 = tile[pixel_index_in_tile + 2];
+            const uint16_t a16 = tile[pixel_index_in_tile + 3];
+
+            const size_t out_idx = ((size_t)y * (size_t)width + (size_t)x) * 4u;
+            out_rgba8[out_idx + 0] = (unsigned char)(r16 >> 8);
+            out_rgba8[out_idx + 1] = (unsigned char)(g16 >> 8);
+            out_rgba8[out_idx + 2] = (unsigned char)(b16 >> 8);
+            out_rgba8[out_idx + 3] = (unsigned char)(a16 >> 8);
+        }
+    }
+}

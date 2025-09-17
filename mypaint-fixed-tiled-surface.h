@@ -29,6 +29,10 @@ mypaint_fixed_tiled_surface_get_height(MyPaintFixedTiledSurface *self);
 MyPaintSurface *
 mypaint_fixed_tiled_surface_interface(MyPaintFixedTiledSurface *self);
 
+/* Read the full surface into a contiguous RGBA8 buffer (row-major, width*height*4 bytes). */
+void
+mypaint_fixed_tiled_surface_read_rgba8(MyPaintFixedTiledSurface *self, unsigned char *out_rgba8);
+
 G_END_DECLS
 
 #endif // MYPAINTFIXEDTILEDSURFACE_H

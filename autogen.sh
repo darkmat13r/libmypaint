@@ -9,10 +9,10 @@
 # tools and you shouldn't use this script.  Just call ./configure
 # directly.
 
-ACLOCAL=${ACLOCAL-aclocal-1.17}
+ACLOCAL=${ACLOCAL-aclocal}
 AUTOCONF=${AUTOCONF-autoconf}
 AUTOHEADER=${AUTOHEADER-autoheader}
-AUTOMAKE=${AUTOMAKE-automake-1.17}
+AUTOMAKE=${AUTOMAKE-automake}
 LIBTOOLIZE=${LIBTOOLIZE-libtoolize}
 PYTHON=${PYTHON-python}
 
@@ -216,22 +216,81 @@ if test -z "$ACLOCAL_FLAGS"; then
     m4list="glib-2.0.m4 glib-gettext.m4 intltool.m4 pkg.m4"
     acdir0=`$ACLOCAL --print-ac-dir`
     acpaths=`echo "${ACLOCAL_PATH}:${acdir0}" | sed 's/:/ /g'`
+
+    found_dirs=""
+    missing_any=0
     for file in $m4list; do
         file_path=""
         for acdir in $acpaths; do
             if test -f "${acdir}/${file}"; then
                 file_path="$acdir/$file"
+                dir=`dirname "$file_path"`
+                case " $found_dirs " in *" $dir "*) : ;; *) found_dirs="$found_dirs $dir" ;; esac
                 break
             fi
         done
         if test "x$file_path" = "x"; then
+            missing_any=1
+        fi
+    done
+
+    # If any required .m4 files are missing from the current aclocal search path,
+    # try to auto-detect common locations (Homebrew, MacPorts, /usr/local)
+    if test $missing_any -ne 0; then
+        probe_dirs="/usr/local/share/aclocal /opt/local/share/aclocal"
+        if (brew --prefix) >/dev/null 2>&1; then
+            brew_prefix=`brew --prefix`
+            probe_dirs="$probe_dirs $brew_prefix/share/aclocal"
+            if (brew --prefix glib) >/dev/null 2>&1; then
+                brew_glib_prefix=`brew --prefix glib`
+                probe_dirs="$probe_dirs $brew_glib_prefix/share/aclocal"
+            fi
+            if (brew --prefix gettext) >/dev/null 2>&1; then
+                brew_gettext_prefix=`brew --prefix gettext`
+                probe_dirs="$probe_dirs $brew_gettext_prefix/share/aclocal"
+            fi
+            if (brew --prefix pkg-config) >/dev/null 2>&1; then
+                brew_pkg_prefix=`brew --prefix pkg-config`
+                probe_dirs="$probe_dirs $brew_pkg_prefix/share/aclocal"
+            fi
+        fi
+        for d in $probe_dirs; do
+            for file in $m4list; do
+                if test -f "$d/$file"; then
+                    case " $found_dirs " in *" $d "*) : ;; *) found_dirs="$found_dirs $d" ;; esac
+                fi
+            done
+        done
+    fi
+
+    # If we found any useful directories not already in the default search path,
+    # add them to ACLOCAL_FLAGS so aclocal can pick them up automatically.
+    if test "x$found_dirs" != "x"; then
+        for d in $found_dirs; do
+            case " $acpaths " in *" $d "*) : ;; *) ACLOCAL_FLAGS="-I $d ${ACLOCAL_FLAGS}" ;; esac
+        done
+    fi
+
+    # After probing, print warnings only for still-missing files
+    acpaths=`echo "${ACLOCAL_PATH}:${acdir0}" | sed 's/:/ /g'`
+    for file in $m4list; do
+        have_file=0
+        for acdir in $acpaths $found_dirs; do
+            if test -f "${acdir}/${file}"; then
+                have_file=1
+                break
+            fi
+        done
+        if test $have_file -eq 0; then
             echo "WARNING: cannot find $file in aclocal's search path."
             echo "         You may see fatal macro warnings below."
-            echo "         I looked in: $acpaths"
+            echo "         I looked in: $acpaths $found_dirs"
             echo "         If these files are installed in /some/dir, set the "
-            echo "         ACLOCAL_FLAGS environment variable to \"-I /some/dir\","
+            echo "         ACLOCAL_FLAGS environment variable to \"-I /some/dir\"," 
             echo "         or append \":/some/dir\" to ACLOCAL_PATH,"
             echo "         or install $acdir0/$file."
+            echo "         On macOS with Homebrew, try: export ACLOCAL_PATH=\`brew --prefix\`/share/aclocal:\`brew --prefix gettext\`/share/aclocal:\`brew --prefix glib\`/share/aclocal"
+            echo "         With MacPorts, try: export ACLOCAL_PATH=/opt/local/share/aclocal:$ACLOCAL_PATH"
             echo
         fi
     done

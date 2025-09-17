@@ -79,9 +79,39 @@ AC_SUBST(LIBMYPAINT_API_PLATFORM_VERSION)
 AC_SUBST(LIBMYPAINT_API_PLATFORM_VERSION_UL)
 AC_SUBST(LIBMYPAINT_ABI_VERSION_INFO)
 
+# Early pre-check: detect Clang and bail out if GCC-only flags are present in CFLAGS
+# This must run before AC_PROG_CC, because AC_PROG_CC performs a sanity
+# compile that will fail opaquely if unsupported flags are present.
+AC_MSG_CHECKING([for Clang compiler (pre-check)])
+clang_precheck=no
+AS_IF([test -n "$CC"], [cc_to_check="$CC"], [cc_to_check=gcc])
+AS_IF([($cc_to_check --version) >/dev/null 2>&1], [
+  AS_IF([$cc_to_check --version 2>/dev/null | grep -qi "clang"], [clang_precheck=yes])
+])
+AC_MSG_RESULT([$clang_precheck])
+AS_IF([test "x$clang_precheck" = xyes], [
+  bad_flags_present=no
+  case " $CFLAGS " in
+    *" -fopt-info-vec-optimized "*|*" -funsafe-loop-optimizations "*|*" -ftree-vectorize "* ) bad_flags_present=yes;;
+  esac
+  AS_IF([test "x$bad_flags_present" = xyes], [
+    AC_MSG_ERROR([Detected Clang/Apple Clang with GCC-specific flags in CFLAGS, which will cause the initial compiler test to fail.
+
+Your CFLAGS are: $CFLAGS
+Unsupported flags for Clang: -fopt-info-vec-optimized, -funsafe-loop-optimizations, -ftree-vectorize.
+
+Please unset or adjust CFLAGS and re-run configure. For example:
+  unset CFLAGS CXXFLAGS LDFLAGS
+or use portable flags:
+  export CFLAGS='-O3 -march=native -mtune=native -ffast-math'
+])
+  ])
+])
+
 AC_PROG_CC
 AC_PROG_CC_C99
 AM_PROG_AR
+
 
 AC_PROG_INSTALL
 
@@ -248,9 +278,49 @@ if test "x$enable_i18n" != "xno"; then
 IT_PROG_INTLTOOL
   AM_GLIB_GNU_GETTEXT
 
-  dnl Debian: stdlib
-  dnl Windows, and OSX: -lintl
-  AC_SEARCH_LIBS([dgettext], [intl], [], AC_MSG_ERROR([no dgettext]))
+  dnl Allow users to point to a non-standard gettext/libintl prefix (e.g. Homebrew keg-only)
+  AC_ARG_WITH([libintl-prefix],
+    [AS_HELP_STRING([--with-libintl-prefix=DIR],
+      [prefix where gettext/libintl is installed (e.g. `brew --prefix gettext`)])],
+    [
+      CPPFLAGS="$CPPFLAGS -I$withval/include"
+      LDFLAGS="$LDFLAGS -L$withval/lib"
+    ])
+
+  dnl Debian: dgettext may be in the C library
+  dnl macOS/Windows: dgettext is typically in libintl, sometimes provided via pkg-config
+  have_dgettext=no
+  AC_CHECK_FUNC([dgettext], [have_dgettext=yes], [])
+  if test "x$have_dgettext" != "xyes"; then
+    dnl Try pkg-config first (e.g. Homebrew's libintl.pc)
+    PKG_CHECK_MODULES([LIBINTL], [libintl], [
+      LIBS="$LIBINTL_LIBS $LIBS"
+      CPPFLAGS="$CPPFLAGS $LIBINTL_CFLAGS"
+      have_dgettext=yes
+    ], [have_dgettext=no])
+  fi
+  if test "x$have_dgettext" != "xyes"; then
+    dnl Finally, try linking explicitly with -lintl
+    AC_SEARCH_LIBS([dgettext], [intl], [have_dgettext=yes], [])
+  fi
+
+  dnl On macOS, make the failure actionable and suggest fixes
+  if test "x$have_dgettext" != "xyes"; then
+    AC_MSG_ERROR([dgettext not found.
+
+On macOS with Homebrew (keg-only gettext), either:
+  export PATH="`brew --prefix gettext`/bin:$PATH"
+  export PKG_CONFIG_PATH="`brew --prefix gettext`/lib/pkgconfig:$PKG_CONFIG_PATH"
+OR pass the prefix explicitly:
+  ./configure --with-libintl-prefix="`brew --prefix gettext`"
+
+With MacPorts:
+  export PKG_CONFIG_PATH="/opt/local/lib/pkgconfig:$PKG_CONFIG_PATH"
+
+If you don’t need translations, you can skip i18n:
+  ./configure --disable-i18n
+])
+  fi
 fi
 AM_CONDITIONAL(HAVE_I18N, test "x$enable_i18n" = "xyes")
 
