@@ -176,7 +176,14 @@ Alternatively, you may want to enable /usr/local for libraries.  Arch and Redhat
 
 There are a couple of small, self-contained examples in the examples/ directory. They render to a PPM file (output.ppm).
 
-Option A: Build and run directly from the source tree (no install required)
+Quick way (no install required):
+
+    $ ./autogen.sh   # only when building from git
+    $ ./configure
+    $ make
+    $ sh examples/run-minimal.sh
+
+Option A: Build and run directly from the source tree (manual compile, no install required)
 
 1) Prepare the build tree (needed to generate headers like config.h and mypaint-config.h):
 
@@ -399,3 +406,101 @@ An Android Studio sample project is included under examples/android that demonst
 - Open examples/android in Android Studio and build/run on a device or emulator.
 
 This is a minimal example intended for learning and quick validation that your cross‑compiled libmypaint works on Android.
+
+
+## Creating a custom brush
+
+There are two common ways to create a custom brush with libmypaint:
+
+1) Programmatically, by setting base values and input mappings
+- Create a MyPaintBrush, initialize defaults, then tweak base values and add mappings for inputs like pressure, speed, tilt, etc.
+- Core APIs:
+  - mypaint_brush_from_defaults(), mypaint_brush_set_base_value(), mypaint_brush_set_mapping_n(), mypaint_brush_set_mapping_point()
+  - Settings and inputs enums: see mypaint-brush-settings.h (generated header lists MYPAINT_BRUSH_SETTING_* and MYPAINT_BRUSH_INPUT_*)
+
+Minimal example (also see examples/custom_brush.c):
+
+    MyPaintBrush *b = mypaint_brush_new();
+    mypaint_brush_from_defaults(b);
+    // Base parameters
+    mypaint_brush_set_base_value(b, MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC, -1.0f);
+    mypaint_brush_set_base_value(b, MYPAINT_BRUSH_SETTING_OPAQUE, 0.9f);
+    mypaint_brush_set_base_value(b, MYPAINT_BRUSH_SETTING_HARDNESS, 0.7f);
+    mypaint_brush_set_base_value(b, MYPAINT_BRUSH_SETTING_COLOR_H, 0.6f);
+    mypaint_brush_set_base_value(b, MYPAINT_BRUSH_SETTING_COLOR_S, 0.9f);
+    mypaint_brush_set_base_value(b, MYPAINT_BRUSH_SETTING_COLOR_V, 0.95f);
+    // Pressure → opacity mapping (2-point linear)
+    mypaint_brush_set_mapping_n(b, MYPAINT_BRUSH_SETTING_OPAQUE, MYPAINT_BRUSH_INPUT_PRESSURE, 2);
+    mypaint_brush_set_mapping_point(b, MYPAINT_BRUSH_SETTING_OPAQUE, MYPAINT_BRUSH_INPUT_PRESSURE, 0, 0.0f, 0.05f);
+    mypaint_brush_set_mapping_point(b, MYPAINT_BRUSH_SETTING_OPAQUE, MYPAINT_BRUSH_INPUT_PRESSURE, 1, 1.0f, 1.0f);
+
+2) From a JSON preset (.myb file)
+- Brush presets are JSON with a top-level "version" and a "settings" object. Each setting has a base_value and optional inputs mapping.
+- Load from a string with mypaint_brush_from_string(). To load from a file, read it into memory first.
+
+Minimal preset example (save as my_custom.myb):
+
+    {
+      "settings": {
+        "radius_logarithmic": { "base_value": -1.0, "inputs": {} },
+        "opaque": {
+          "base_value": 0.9,
+          "inputs": { "pressure": [[0.0, 0.05], [1.0, 1.0]] }
+        },
+        "hardness": { "base_value": 0.7, "inputs": {} },
+        "color_h": { "base_value": 0.6, "inputs": {} },
+        "color_s": { "base_value": 0.9, "inputs": {} },
+        "color_v": { "base_value": 0.95, "inputs": {} }
+      },
+      "version": 3
+    }
+
+Then in C:
+
+    char *json = read_file("my_custom.myb");
+    MyPaintBrush *b = mypaint_brush_new();
+    if (!mypaint_brush_from_string(b, json)) { /* handle error */ }
+
+Tips
+- All setting and input canonical names (as used in JSON) are listed in brushsettings.json. The corresponding C enums and documentation are in mypaint-brush-settings.h.
+- You can override preset values at runtime with mypaint_brush_set_base_value() or change curves with mypaint_brush_set_mapping_point().
+- Start simple: adjust radius_logarithmic, opaque, hardness, and color_*; add a pressure curve. Then iterate.
+
+See also
+- examples/minimal.c for a tiny drawing program.
+- examples/custom_brush.c for a focused custom-brush demo (programmatic and JSON-based).
+
+## Paper grain (experimental)
+
+You can enable a simple procedural “paper grain” that modulates per‑pixel dab opacity during blending. This is off by default and only intended for experiments and examples; host applications typically implement paper textures themselves.
+
+- Enable: set environment variable MYPAINT_PAPER_NOISE=1
+- Strength: optional MYPAINT_PAPER_STRENGTH in range [0..1], default 0.5
+- How it works: a fast hash‑based noise of screen‑space pixel coordinates multiplies each dab’s opacity. This is applied inside the software renderer and does not change the public API. It is deterministic and thread‑safe. When disabled (default), behavior is identical to upstream.
+- Try it quickly with the example:
+
+    $ MYPAINT_PAPER_NOISE=1 MYPAINT_PAPER_STRENGTH=0.6 ./examples/minimal
+
+Notes:
+- This feature is experimental and primarily for demonstration. Production apps should provide their own paper/grain system so it can be configured per‑layer and rendered with the host’s pipeline.
+- Tests and default behavior are unaffected when the env var is unset.
+
+## Different tip shapes
+
+Libmypaint supports non‑circular dabs via the elliptical dab settings. In code or presets, adjust:
+- elliptical_dab_ratio (ratio > 1.0 makes an ellipse)
+- elliptical_dab_angle (degrees)
+
+In C (see examples/custom_brush.c):
+
+    mypaint_brush_set_base_value(b, MYPAINT_BRUSH_SETTING_ELLIPTICAL_DAB_RATIO, 3.0f);
+    mypaint_brush_set_base_value(b, MYPAINT_BRUSH_SETTING_ELLIPTICAL_DAB_ANGLE, 45.0f);
+
+You can also map angle to direction for dynamic orientation.
+
+## FAQ
+
+- Does libmypaint use OpenGL (or the GPU) for brush rendering?
+  - No. libmypaint is a CPU-based brush engine. It renders brush dabs and blends them into client-provided tile surfaces in software. There are no OpenGL/Direct3D/Vulkan calls in the library. The tiled software renderer lives in mypaint-tiled-surface.c and related files; integrations are expected to upload the resulting pixels to the screen using whatever technology they prefer (which may be GPU-based) in the host application.
+  - An optional build flag `--enable-gegl` uses GEGL/BABL for some operations, but this is still CPU-side within libmypaint. GPU/display acceleration, if any, is handled by the embedding application (e.g., MyPaint, Krita, GIMP) rather than by libmypaint itself.
+  - The PERFORMANCE document discusses possible future ideas involving OpenCL/OpenGL interoperability, but those are design notes and not implemented in libmypaint.

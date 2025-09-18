@@ -35,6 +35,45 @@
 
 void process_tile(MyPaintTiledSurface *self, int tx, int ty);
 
+// Optional paper grain: env-gated procedural noise modulation of per-pixel dab opacity.
+// Disabled by default. Enable by setting MYPAINT_PAPER_NOISE to a nonzero value.
+// Strength can be controlled with MYPAINT_PAPER_STRENGTH in [0..1] (default 0.5).
+static int g_paper_noise_enabled = -1; // -1 = uninitialized, 0 = disabled, 1 = enabled
+static float g_paper_noise_strength = 0.5f;
+
+static inline unsigned int wang_hash(unsigned int x) {
+    x = (x ^ 61u) ^ (x >> 16);
+    x = x + (x << 3);
+    x = x ^ (x >> 4);
+    x = x * 0x27d4eb2d;
+    x = x ^ (x >> 15);
+    return x;
+}
+
+static inline float paper_noise_value(int x, int y) {
+    // Mix coordinates with two large primes, then hash.
+    unsigned int h = wang_hash((unsigned int)x * 73856093u ^ (unsigned int)y * 19349663u);
+    // Convert to float in [0,1]
+    return (h / 4294967295.0f);
+}
+
+static inline void paper_noise_init_if_needed(void) {
+    if (g_paper_noise_enabled != -1) return;
+    const char* env = getenv("MYPAINT_PAPER_NOISE");
+    if (env && env[0] && strcmp(env, "0") != 0) {
+        g_paper_noise_enabled = 1;
+        const char* s = getenv("MYPAINT_PAPER_STRENGTH");
+        if (s && s[0]) {
+            float v = (float)atof(s);
+            if (v < 0.0f) v = 0.0f;
+            if (v > 1.0f) v = 1.0f;
+            g_paper_noise_strength = v;
+        }
+    } else {
+        g_paper_noise_enabled = 0;
+    }
+}
+
 static void
 begin_atomic_default(MyPaintSurface *surface)
 {
@@ -378,7 +417,8 @@ void render_dab_mask (uint16_t * mask,
                         float radius,
                         float hardness,
                         float softness,
-                        float aspect_ratio, float angle
+                        float aspect_ratio, float angle,
+                        int tile_origin_x, int tile_origin_y
                         )
 {
 
@@ -471,10 +511,21 @@ void render_dab_mask (uint16_t * mask,
       int xp;
       for (xp = x0; xp <= x1; xp++) {
         const float rr = rr_mask[(yp*MYPAINT_TILE_SIZE)+xp];
-        const float opa = calculate_opa(rr, hardness,
+        float opa = calculate_opa(rr, hardness,
                                   segment1_offset, segment1_slope,
                                   segment2_offset, segment2_slope);
-        const uint16_t opa_ = opa * (1<<15);
+        // Paper grain modulation (optional, env-gated)
+        if (opa > 0.0f) {
+          paper_noise_init_if_needed();
+          if (g_paper_noise_enabled == 1) {
+            const int abs_x = tile_origin_x + xp;
+            const int abs_y = tile_origin_y + yp;
+            float n = paper_noise_value(abs_x, abs_y); // [0,1]
+            float m = (1.0f - g_paper_noise_strength) + g_paper_noise_strength * n;
+            opa *= m;
+          }
+        }
+        const uint16_t opa_ = (uint16_t)CLAMP(opa, 0.0f, 1.0f) * (1<<15);
         if (!opa_) {
           skip++;
         } else {
@@ -505,7 +556,8 @@ process_op(uint16_t *rgba_p, uint16_t *mask,
                     op->radius,
                     op->hardness,
                     op->softness,
-                    op->aspect_ratio, op->angle
+                    op->aspect_ratio, op->angle,
+                    tx*MYPAINT_TILE_SIZE, ty*MYPAINT_TILE_SIZE
                     );
 
     // second, we use the mask to stamp a dab for each activated blend mode
@@ -882,7 +934,8 @@ void get_color (MyPaintSurface *surface, float x, float y,
                         radius,
                         hardness,
                         softness,
-                        aspect_ratio, angle
+                        aspect_ratio, angle,
+                        tx*MYPAINT_TILE_SIZE, ty*MYPAINT_TILE_SIZE
                         );
 
         // TODO: try atomic operations instead

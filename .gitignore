@@ -1700,3 +1700,6 @@ m4macros/lt~obsolete.m4
 /.env/pyvenv.cfg
 /build/po/POTFILES
 /examples/android/app/build/
+/examples/android/app/.cxx/
+/examples/android/.gradle/
+/examples/android/.idea/
