@@ -7,6 +7,7 @@ import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.os.Build
 import android.util.AttributeSet
+import android.util.Log
 import android.view.MotionEvent
 import androidx.annotation.RequiresApi
 import java.nio.ByteBuffer
@@ -46,6 +47,7 @@ class GLDrawingView @JvmOverloads constructor(
     // Background worker that consumes events and calls into libmypaint
     private val workerThread = thread(start = true, name = "StrokeWorker") {
         var inStroke = false
+        var pendingBrushJson: String? = null
         while (running) {
             try {
                 val ev = eventQueue.take()
@@ -56,54 +58,120 @@ class GLDrawingView @JvmOverloads constructor(
                             inStroke = true
                         }
                         bridge.strokeTo(ev.x, ev.y, ev.pressure, ev.dt, ev.xtilt, ev.ytilt)
+                        // Flush mid-stroke so renderer can see updates before stroke end
+                        bridge.flush()
                         requestRenderOnGL()
                     }
                     is StrokeEvent.Move -> {
                         // Drain additional events and process them; prefer coalescing consecutive moves
                         val drained: MutableList<StrokeEvent> = ArrayList(16)
                         drained.add(ev)
-                        eventQueue.drainTo(drained, 31)
+                        eventQueue.drainTo(drained, 100)
                         for (e2 in drained) {
                             when (e2) {
                                 is StrokeEvent.Move -> {
                                     bridge.strokeTo(e2.x, e2.y, e2.pressure, e2.dt, e2.xtilt, e2.ytilt)
                                 }
                                 is StrokeEvent.Begin -> {
-                                    bridge.beginStroke()
+                                    if (!inStroke) {
+                                        bridge.beginStroke()
+                                        inStroke = true
+                                    }
                                     bridge.strokeTo(e2.x, e2.y, e2.pressure, e2.dt, e2.xtilt, e2.ytilt)
                                 }
                                 is StrokeEvent.End -> {
                                     bridge.strokeTo(e2.x, e2.y, e2.pressure, e2.dt, e2.xtilt, e2.ytilt)
                                     bridge.endStroke()
                                     inStroke = false
+                                    // If a brush preset change was requested during the stroke, apply it now
+                                    pendingBrushJson?.let { json ->
+                                        val ok = bridge.loadBrushFromString(json)
+                                        if (!ok) {
+                                            android.util.Log.e("GLDrawingView", "Deferred brush load failed (mypaint false)")
+                                        } else {
+                                            android.util.Log.d("GLDrawingView", "Deferred brush preset applied after stroke end")
+                                        }
+                                        pendingBrushJson = null
+                                    }
                                 }
                                 is StrokeEvent.Action -> {
                                     when (e2.kind) {
                                         StrokeAction.Clear -> {
+                                            // If clearing mid-stroke, end it cleanly first to avoid engine state oddities
+                                            if (inStroke) {
+                                                bridge.endStroke()
+                                                inStroke = false
+                                            }
                                             bridge.clearCanvas()
                                         }
                                         is StrokeAction.SetBrushSize -> bridge.setBrushSize(e2.kind.sizePx)
                                         is StrokeAction.SetColor -> bridge.setColorRgb(e2.kind.r, e2.kind.g, e2.kind.b)
+                                        is StrokeAction.LoadBrush -> {
+                                            val json = e2.kind.json
+                                            if (inStroke) {
+                                                // Defer until stroke end to avoid breaking the current stroke
+                                                pendingBrushJson = json
+                                                android.util.Log.d("GLDrawingView", "Deferring brush load until stroke end")
+                                            } else {
+                                                val ok = bridge.loadBrushFromString(json)
+                                                if (!ok) {
+                                                    android.util.Log.e("GLDrawingView", "Brush preset load failed (mypaint false)")
+                                                } else {
+                                                    android.util.Log.d("GLDrawingView", "Brush preset loaded successfully")
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
+                        // Flush once after processing the batch so GL sees updates
+                        bridge.flush()
                         requestRenderOnGL()
                     }
                     is StrokeEvent.End -> {
                         bridge.strokeTo(ev.x, ev.y, ev.pressure, ev.dt, ev.xtilt, ev.ytilt)
                         bridge.endStroke()
                         inStroke = false
+                        // Apply any deferred brush preset now
+                        pendingBrushJson?.let { json ->
+                            val ok = bridge.loadBrushFromString(json)
+                            if (!ok) {
+                                android.util.Log.e("GLDrawingView", "Deferred brush load failed (mypaint false)")
+                            } else {
+                                android.util.Log.d("GLDrawingView", "Deferred brush preset applied after stroke end")
+                            }
+                            pendingBrushJson = null
+                        }
                         requestRenderOnGL()
                     }
                     is StrokeEvent.Action -> {
                         when (ev.kind) {
                             StrokeAction.Clear -> {
+                                if (inStroke) {
+                                    bridge.endStroke()
+                                    inStroke = false
+                                }
                                 bridge.clearCanvas()
                                 requestRenderOnGL()
                             }
                             is StrokeAction.SetBrushSize -> bridge.setBrushSize(ev.kind.sizePx)
                             is StrokeAction.SetColor -> bridge.setColorRgb(ev.kind.r, ev.kind.g, ev.kind.b)
+                            is StrokeAction.LoadBrush -> {
+                                val json = ev.kind.json
+                                if (inStroke) {
+                                    pendingBrushJson = json
+                                    android.util.Log.d("GLDrawingView", "Deferring brush load until stroke end")
+                                } else {
+                                    val ok = bridge.loadBrushFromString(json)
+                                    if (!ok) {
+                                        android.util.Log.e("GLDrawingView", "Brush preset load failed (mypaint false)")
+                                    } else {
+                                        android.util.Log.d("GLDrawingView", "Brush preset loaded successfully")
+                                    }
+                                    requestRenderOnGL()
+                                }
+                            }
                         }
                     }
                 }
@@ -153,6 +221,10 @@ class GLDrawingView @JvmOverloads constructor(
 
     fun setColor(r: Float, g: Float, b: Float) {
         eventQueue.offer(StrokeEvent.Action(StrokeAction.SetColor(r, g, b)))
+    }
+
+    fun loadBrushFromString(json: String) {
+        eventQueue.offer(StrokeEvent.Action(StrokeAction.LoadBrush(json)))
     }
 
     override fun onDetachedFromWindow() {
@@ -382,7 +454,17 @@ class GLDrawingView @JvmOverloads constructor(
             """
         }
     }
+    private fun loadBrushImmediately(json: String) {
+        val ok = bridge.loadBrushFromString(json)
+        if (!ok) {
+            Log.e("GLDrawingView", "Failed to load brush preset from JSON (mypaint returned false)")
+        } else {
+            Log.d("GLDrawingView", "Brush preset loaded successfully (batch)")
+        }
+    }
 }
+
+
 
 // Stroke event model
 private sealed class StrokeEvent {
@@ -396,4 +478,5 @@ private sealed class StrokeAction {
     data object Clear : StrokeAction()
     data class SetBrushSize(val sizePx: Float) : StrokeAction()
     data class SetColor(val r: Float, val g: Float, val b: Float) : StrokeAction()
+    data class LoadBrush(val json: String) : StrokeAction()
 }

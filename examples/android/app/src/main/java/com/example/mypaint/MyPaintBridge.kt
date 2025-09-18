@@ -18,6 +18,9 @@ class MyPaintBridge {
     external fun endStroke()
     external fun readRgba(): ByteArray?
 
+    // Ensure visible intermediate results while inside atomic
+    external fun flush()
+
     // Brush controls
     external fun setBrushSize(sizePx: Float)
 

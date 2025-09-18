@@ -1,6 +1,7 @@
 #include <jni.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 #include "mypaint-brush.h"
 #include "mypaint-fixed-tiled-surface.h"
 #include "mypaint_log.h"
@@ -44,6 +45,8 @@ static int g_w = 0, g_h = 0;
 static float g_color_r = 1.0f, g_color_g = 0.0f, g_color_b = 0.0f;
 // Track whether we are currently inside an atomic block
 static int g_in_atomic = 0;
+// Mutex to serialize access to g_surface/g_brush across threads (worker vs GL renderer)
+static pthread_mutex_t g_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static void free_canvas() {
     if (g_brush) { mypaint_brush_unref(g_brush); g_brush = NULL; }
@@ -110,6 +113,7 @@ Java_com_example_mypaint_MyPaintBridge_renderDemo(JNIEnv* env, jobject thiz,
 JNIEXPORT void JNICALL
 Java_com_example_mypaint_MyPaintBridge_initCanvas(JNIEnv* env, jobject thiz, jint width, jint height) {
     if (width <= 0 || height <= 0) return;
+    pthread_mutex_lock(&g_mutex);
     free_canvas();
     g_w = width; g_h = height;
     g_surface = mypaint_fixed_tiled_surface_new(g_w, g_h);
@@ -120,34 +124,49 @@ Java_com_example_mypaint_MyPaintBridge_initCanvas(JNIEnv* env, jobject thiz, jin
     mypaint_brush_set_base_value(g_brush, MYPAINT_BRUSH_SETTING_COLOR_S, 1.0f);
     mypaint_brush_set_base_value(g_brush, MYPAINT_BRUSH_SETTING_COLOR_V, 1.0f);
     g_in_atomic = 0;
+    pthread_mutex_unlock(&g_mutex);
 }
 
 JNIEXPORT void JNICALL
 Java_com_example_mypaint_MyPaintBridge_clearCanvas(JNIEnv* env, jobject thiz) {
     if (g_w <= 0 || g_h <= 0) return;
+    pthread_mutex_lock(&g_mutex);
     if (g_surface) { mypaint_surface_unref((MyPaintSurface*)g_surface); }
     g_surface = mypaint_fixed_tiled_surface_new(g_w, g_h);
     g_in_atomic = 0;
+    pthread_mutex_unlock(&g_mutex);
 }
 
 // Load a MyPaint brush preset from a JSON string (.myb contents). Returns true on success.
 JNIEXPORT jboolean JNICALL
 Java_com_example_mypaint_MyPaintBridge_loadBrushFromString(JNIEnv* env, jobject thiz, jstring jsonStr) {
     if (!jsonStr) return JNI_FALSE;
+    pthread_mutex_lock(&g_mutex);
     if (!g_brush) {
         g_brush = mypaint_brush_new();
         mypaint_brush_from_defaults(g_brush);
     }
     const char* cjson = (*env)->GetStringUTFChars(env, jsonStr, NULL);
-    if (!cjson) return JNI_FALSE;
+    if (!cjson) { pthread_mutex_unlock(&g_mutex); return JNI_FALSE; }
+    LOGD("Loading brush from JSON string...");
     gboolean ok = mypaint_brush_from_string(g_brush, cjson);
     (*env)->ReleaseStringUTFChars(env, jsonStr, cjson);
+    if (ok) {
+        // Ensure new settings take effect by resetting internal state and starting a new stroke basis
+        mypaint_brush_reset(g_brush);
+        mypaint_brush_new_stroke(g_brush);
+        LOGI("Brush preset loaded successfully");
+    } else {
+        LOGE("Failed to load brush preset: mypaint_brush_from_string returned FALSE");
+    }
+    pthread_mutex_unlock(&g_mutex);
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 
 // Set the current stroke color used by direct dabs (RGB components in 0..1)
 JNIEXPORT void JNICALL
 Java_com_example_mypaint_MyPaintBridge_setColorRgb(JNIEnv* env, jobject thiz, jfloat r, jfloat g, jfloat b) {
+    pthread_mutex_lock(&g_mutex);
     // Clamp inputs to [0,1]
     if (r < 0.f) r = 0.f; if (r > 1.f) r = 1.f;
     if (g < 0.f) g = 0.f; if (g > 1.f) g = 1.f;
@@ -177,73 +196,62 @@ Java_com_example_mypaint_MyPaintBridge_setColorRgb(JNIEnv* env, jobject thiz, jf
         mypaint_brush_set_base_value(g_brush, MYPAINT_BRUSH_SETTING_COLOR_S, s);
         mypaint_brush_set_base_value(g_brush, MYPAINT_BRUSH_SETTING_COLOR_V, v);
     }
+    pthread_mutex_unlock(&g_mutex);
 }
 
 JNIEXPORT void JNICALL
 Java_com_example_mypaint_MyPaintBridge_beginStroke(JNIEnv* env, jobject thiz) {
-    if (!g_brush || !g_surface) return;
+    pthread_mutex_lock(&g_mutex);
+    if (!g_brush || !g_surface) { pthread_mutex_unlock(&g_mutex); return; }
     mypaint_surface_begin_atomic((MyPaintSurface*)g_surface);
     g_in_atomic = 1;
 
     mypaint_brush_new_stroke(g_brush);
 
     LOGD("New Brush Stroke");
+    pthread_mutex_unlock(&g_mutex);
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_mypaint_MyPaintBridge_strokeTo(JNIEnv* env, jobject thiz, jfloat x, jfloat y, jfloat pressure, jfloat dtime) {
-    if (!g_brush || !g_surface) return;
+Java_com_example_mypaint_MyPaintBridge_strokeTo(JNIEnv* env, jobject thiz, jfloat x, jfloat y, jfloat pressure, jfloat dtime, jfloat xtilt, jfloat ytilt) {
+    pthread_mutex_lock(&g_mutex);
+    if (!g_brush || !g_surface) { pthread_mutex_unlock(&g_mutex); return; }
+    // Normalize tilts if they are NaN (Kotlin may pass Float.NaN)
+    if (xtilt != xtilt) xtilt = 0.0f; // NaN check
+    if (ytilt != ytilt) ytilt = 0.0f; // NaN check
     // Use brush engine stroke_to so preset (.myb) settings take effect
     float viewzoom = 1.0f, viewrotation = 0.0f, barrel_rotation = 0.0f;
-    float xtilt = 0.0f, ytilt = 0.0f;
     gboolean linear = FALSE;
     mypaint_brush_stroke_to(g_brush, (MyPaintSurface*)g_surface,
                             x, y,
                             pressure, xtilt, ytilt, dtime,
                             viewzoom, viewrotation, barrel_rotation,
                             linear);
+    pthread_mutex_unlock(&g_mutex);
 }
 
 JNIEXPORT void JNICALL
 Java_com_example_mypaint_MyPaintBridge_endStroke(JNIEnv* env, jobject thiz) {
-    if (!g_brush || !g_surface) return;
-mypaint_surface_end_atomic((MyPaintSurface*)g_surface, NULL);
-g_in_atomic = 0;
-// Reset brush engine state to ensure a clean start, per mypaint-brush.c guidance
-mypaint_brush_reset(g_brush);
+    pthread_mutex_lock(&g_mutex);
+    if (!g_brush || !g_surface) { pthread_mutex_unlock(&g_mutex); return; }
+    mypaint_surface_end_atomic((MyPaintSurface*)g_surface, NULL);
+    g_in_atomic = 0;
+    // Reset brush engine state to ensure a clean start, per mypaint-brush.c guidance
+    mypaint_brush_reset(g_brush);
+    pthread_mutex_unlock(&g_mutex);
 }
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_example_mypaint_MyPaintBridge_readRgba(JNIEnv* env, jobject thiz) {
-    if (!g_surface || g_w <= 0 || g_h <= 0) return NULL;
-
-    // If we are inside an atomic block, temporarily end it so pending dabs are committed
-    int reopened = 0;
-    if (g_in_atomic) {
-        mypaint_surface_end_atomic((MyPaintSurface*)g_surface, NULL);
-        g_in_atomic = 0;
-        reopened = 1;
-    }
+    pthread_mutex_lock(&g_mutex);
+    if (!g_surface || g_w <= 0 || g_h <= 0) { pthread_mutex_unlock(&g_mutex); return NULL; }
 
     size_t count = (size_t)g_w * (size_t)g_h * 4;
     jbyteArray out = (*env)->NewByteArray(env, (jsize)count);
-    if (!out) {
-        // If we closed atomic above, reopen it before returning
-        if (reopened) {
-            mypaint_surface_begin_atomic((MyPaintSurface*)g_surface);
-            g_in_atomic = 1;
-        }
-        return NULL;
-    }
+    if (!out) { pthread_mutex_unlock(&g_mutex); return NULL; }
     jboolean isCopy = JNI_FALSE;
     jbyte* outBytes = (*env)->GetByteArrayElements(env, out, &isCopy);
-    if (!outBytes) {
-        if (reopened) {
-            mypaint_surface_begin_atomic((MyPaintSurface*)g_surface);
-            g_in_atomic = 1;
-        }
-        return NULL;
-    }
+    if (!outBytes) { pthread_mutex_unlock(&g_mutex); return NULL; }
 
     mypaint_fixed_tiled_surface_read_rgba8(g_surface, (unsigned char*)outBytes);
     (*env)->ReleaseByteArrayElements(env, out, outBytes, 0);
@@ -251,13 +259,20 @@ Java_com_example_mypaint_MyPaintBridge_readRgba(JNIEnv* env, jobject thiz) {
     // Optional: log stats occasionally
     // dump_surface_stats(g_surface, g_w, g_h);
 
-    // Reopen atomic block if we had to close it to flush
-    if (reopened) {
-        mypaint_surface_begin_atomic((MyPaintSurface*)g_surface);
-        g_in_atomic = 1;
-    }
-
+    pthread_mutex_unlock(&g_mutex);
     return out;
+}
+
+// Flush pending operations within an ongoing atomic stroke so readbacks show progress.
+JNIEXPORT void JNICALL
+Java_com_example_mypaint_MyPaintBridge_flush(JNIEnv* env, jobject thiz) {
+    pthread_mutex_lock(&g_mutex);
+    if (g_surface && g_in_atomic) {
+        mypaint_surface_end_atomic((MyPaintSurface*)g_surface, NULL);
+        mypaint_surface_begin_atomic((MyPaintSurface*)g_surface);
+        // Note: Do NOT call mypaint_brush_new_stroke or reset here; we are mid-stroke.
+    }
+    pthread_mutex_unlock(&g_mutex);
 }
 
 

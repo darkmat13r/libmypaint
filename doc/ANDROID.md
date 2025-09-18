@@ -19,6 +19,7 @@ If you just want desktop builds, see BUILDING.md and README.md.
 - Output layout and packaging for Gradle
 - Using libmypaint via JNI (minimal example)
 - Tips and troubleshooting
+- Performance on Android
 
 ---
 
@@ -357,6 +358,11 @@ Notes:
   - The API level is encoded in the compiler name. Use the same API for all third‑party libs you compile.
 - Versioned libraries
   - Android doesn’t support versioned SONAMEs. libmypaint’s build system already accounts for this via libtool. You’ll get plain `libmypaint.so`. 
+
+## Performance on Android
+
+For a dedicated, staged plan to improve brush performance on real devices (profiling, JNI/bitmap pipeline optimizations, dirty-region updates, NEON/flags, optional GL path, and validation), see:
+- ANDROID_PERFORMANCE_PLAN.md
 
 ## License and attribution
 - libmypaint is ISC licensed. See COPYING.
