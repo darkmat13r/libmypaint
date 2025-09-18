@@ -22,8 +22,8 @@ class DrawingView @JvmOverloads constructor(
 ) : View(context, attrs, defStyleAttr) {
 
     // Canvas dimensions for native drawing surface
-    private val canvasWidth = 600
-    private val canvasHeight = 300
+    private val canvasWidth = 1024
+    private val canvasHeight = 800
 
     private val bridge = MyPaintBridge()
 
@@ -42,18 +42,15 @@ class DrawingView @JvmOverloads constructor(
     private val touchManager = TouchEventManager(
         onStart = { pe ->
             bridge.beginStroke()
-            // First seed the brush state at the exact touch-down location with zero time delta
-            bridge.strokeTo(pe.x, pe.y, pe.pressure, 0.0f)
-            // Then emit a tiny positive dtime to force an initial dab right under the finger
-            bridge.strokeTo(pe.x, pe.y, pe.pressure, 0.001f)
+            bridge.strokeTo(pe.x, pe.y, pe.pressure, pe.deltaTimeSec, pe.tilt, pe.tilt)
             updateBitmapAndInvalidate()
         },
         onMove = { pe ->
-            bridge.strokeTo(pe.x, pe.y, pe.pressure, pe.deltaTimeSec)
+            bridge.strokeTo(pe.x, pe.y, pe.pressure, pe.deltaTimeSec, pe.tilt, pe.tilt)
             updateBitmapAndInvalidate()
         },
         onEnd = { pe ->
-            bridge.strokeTo(pe.x, pe.y, pe.pressure, pe.deltaTimeSec)
+            bridge.strokeTo(pe.x, pe.y, pe.pressure, pe.deltaTimeSec, pe.tilt, pe.tilt)
             bridge.endStroke()
             updateBitmapAndInvalidate()
         }
@@ -76,6 +73,10 @@ class DrawingView @JvmOverloads constructor(
 
     fun setColor(r: Float, g: Float, b: Float) {
         bridge.setColorRgb(r, g, b)
+    }
+
+    fun setBrushSize(sizePx: Float) {
+        bridge.setBrushSize(sizePx)
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {

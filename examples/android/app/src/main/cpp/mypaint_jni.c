@@ -4,6 +4,7 @@
 #include "mypaint-brush.h"
 #include "mypaint-fixed-tiled-surface.h"
 #include "mypaint_log.h"
+#include <math.h>
 
 static void stroke_to_default(MyPaintBrush *brush, MyPaintSurface *surf, float x, float y) {
     float viewzoom = 1.0f, viewrotation = 0.0f, barrel_rotation = 0.0f;
@@ -44,6 +45,8 @@ static int g_w = 0, g_h = 0;
 static float g_color_r = 1.0f, g_color_g = 0.0f, g_color_b = 0.0f;
 // Track whether we are currently inside an atomic block
 static int g_in_atomic = 0;
+// Current brush radius in pixels (for UI sync); libmypaint uses logarithmic radius internally
+static float g_radius_px = 8.0f;
 
 static void free_canvas() {
     if (g_brush) { mypaint_brush_unref(g_brush); g_brush = NULL; }
@@ -119,6 +122,10 @@ Java_com_example_mypaint_MyPaintBridge_initCanvas(JNIEnv* env, jobject thiz, jin
     mypaint_brush_set_base_value(g_brush, MYPAINT_BRUSH_SETTING_COLOR_H, 0.0f);
     mypaint_brush_set_base_value(g_brush, MYPAINT_BRUSH_SETTING_COLOR_S, 1.0f);
     mypaint_brush_set_base_value(g_brush, MYPAINT_BRUSH_SETTING_COLOR_V, 1.0f);
+    // Set initial radius from g_radius_px using logarithmic scale (radius = 2^val)
+    float rpx = g_radius_px;
+    if (rpx < 0.5f) rpx = 0.5f; if (rpx > 400.f) rpx = 400.f;
+    mypaint_brush_set_base_value(g_brush, MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC, log2f(rpx));
     g_in_atomic = 0;
 }
 
@@ -184,6 +191,7 @@ Java_com_example_mypaint_MyPaintBridge_beginStroke(JNIEnv* env, jobject thiz) {
     if (!g_brush || !g_surface) return;
     mypaint_surface_begin_atomic((MyPaintSurface*)g_surface);
     g_in_atomic = 1;
+
     mypaint_brush_new_stroke(g_brush);
 
     LOGD("New Brush Stroke");
@@ -208,6 +216,8 @@ Java_com_example_mypaint_MyPaintBridge_endStroke(JNIEnv* env, jobject thiz) {
     if (!g_brush || !g_surface) return;
 mypaint_surface_end_atomic((MyPaintSurface*)g_surface, NULL);
 g_in_atomic = 0;
+// Reset brush engine state to ensure a clean start, per mypaint-brush.c guidance
+mypaint_brush_reset(g_brush);
 }
 
 JNIEXPORT jbyteArray JNICALL
@@ -258,3 +268,14 @@ Java_com_example_mypaint_MyPaintBridge_readRgba(JNIEnv* env, jobject thiz) {
 }
 
 
+
+// Set brush size in pixels; libmypaint uses logarithmic radius (val = log2(radius_px))
+JNIEXPORT void JNICALL
+Java_com_example_mypaint_MyPaintBridge_setBrushSize(JNIEnv* env, jobject thiz, jfloat size_px) {
+    if (!g_brush) return;
+    float s = size_px;
+    if (s < 0.5f) s = 0.5f; if (s > 400.f) s = 400.f;
+    g_radius_px = s;
+    float rad_log = log2f(s);
+    mypaint_brush_set_base_value(g_brush, MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC, rad_log);
+}

@@ -14,9 +14,12 @@ class MyPaintBridge {
     external fun clearCanvas()
     external fun setColorRgb(r: Float, g: Float, b: Float)
     external fun beginStroke()
-    external fun strokeTo(x: Float, y: Float, pressure: Float, dtime: Float)
+    external fun strokeTo(x: Float, y: Float, pressure: Float, dtime: Float, xTilt: Float = Float.NaN, yTilt: Float = Float.NaN)
     external fun endStroke()
     external fun readRgba(): ByteArray?
+
+    // Brush controls
+    external fun setBrushSize(sizePx: Float)
 
     // Brush preset loading (.myb JSON string)
     external fun loadBrushFromString(json: String): Boolean

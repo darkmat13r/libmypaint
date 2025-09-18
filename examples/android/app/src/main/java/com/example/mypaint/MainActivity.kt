@@ -9,6 +9,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -69,6 +70,7 @@ private fun MyPaintScreen() {
     }
 
     var drawingView by remember { mutableStateOf<DrawingView?>(null) }
+    var brushSize by remember { mutableFloatStateOf(8f) }
 
     Column(modifier = Modifier.fillMaxSize()) {
         // Drawing area fills available space
@@ -83,30 +85,52 @@ private fun MyPaintScreen() {
                 factory = { ctx ->
                     DrawingView(ctx).also { dv ->
                         drawingView = dv
+                        dv.setBrushSize(brushSize)
                     }
                 }
             )
         }
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            if (previewBitmap != null) {
-                Image(
-                    bitmap = previewBitmap!!.asImageBitmap(),
-                    contentDescription = "Brush preview",
-                    modifier = Modifier.size(72.dp)
-                )
-            } else {
-                Text("Brush preview unavailable")
+        // Controls row: brush preview, size slider, clear button
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                if (previewBitmap != null) {
+                    Image(
+                        bitmap = previewBitmap!!.asImageBitmap(),
+                        contentDescription = "Brush preview",
+                        modifier = Modifier.size(72.dp)
+                    )
+                } else {
+                    Text("Brush preview unavailable")
+                }
+
+                Button(onClick = { drawingView?.clear() }) {
+                    Text("Clear")
+                }
             }
 
-            Button(onClick = { drawingView?.clear() }) {
-                Text("Clear")
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Size ${(brushSize).toInt()} px", modifier = Modifier.width(100.dp))
+                Slider(
+                    value = brushSize,
+                    onValueChange = { v ->
+                        brushSize = v
+                        drawingView?.setBrushSize(v)
+                    },
+                    valueRange = 1f..100f,
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
     }
