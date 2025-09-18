@@ -12,8 +12,12 @@ class MyPaintBridge {
     // Persistent canvas and interactive stroke API
     external fun initCanvas(width: Int, height: Int)
     external fun clearCanvas()
+    external fun setColorRgb(r: Float, g: Float, b: Float)
     external fun beginStroke()
     external fun strokeTo(x: Float, y: Float, pressure: Float, dtime: Float)
     external fun endStroke()
     external fun readRgba(): ByteArray?
+
+    // Brush preset loading (.myb JSON string)
+    external fun loadBrushFromString(json: String): Boolean
 }

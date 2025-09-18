@@ -4,26 +4,36 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <ImageView
-        android:id="@+id/imageView"
+    <com.example.mypaint.DrawingView
+        android:id="@+id/drawingView"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:contentDescription="Rendered brush demo"
-        android:scaleType="fitCenter"
+        android:contentDescription="Drawing surface"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toTopOf="@+id/renderBtn"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <ImageView
+        android:id="@+id/brushPreview"
+        android:layout_width="72dp"
+        android:layout_height="72dp"
+        android:contentDescription="Brush preview"
+        app:layout_constraintTop_toBottomOf="@id/drawingView"
+        app:layout_constraintStart_toStartOf="parent"
+        android:layout_marginStart="16dp"
+        android:layout_marginTop="12dp"
+        android:scaleType="centerInside" />
+
     <Button
         android:id="@+id/renderBtn"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Render"
+        android:text="Clear"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/imageView"
+        app:layout_constraintTop_toBottomOf="@id/drawingView"
         android:layout_margin="16dp" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>
