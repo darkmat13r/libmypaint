@@ -42,15 +42,15 @@ class DrawingView @JvmOverloads constructor(
     private val touchManager = TouchEventManager(
         onStart = { pe ->
             bridge.beginStroke()
-            bridge.strokeTo(pe.x, pe.y, pe.pressure, pe.deltaTimeSec, pe.tilt, pe.tilt)
+            bridge.strokeTo(pe.x, pe.y, pe.pressure, pe.deltaTimeSec, pe.xtilt, pe.xtilt)
             updateBitmapAndInvalidate()
         },
         onMove = { pe ->
-            bridge.strokeTo(pe.x, pe.y, pe.pressure, pe.deltaTimeSec, pe.tilt, pe.tilt)
+            bridge.strokeTo(pe.x, pe.y, pe.pressure, pe.deltaTimeSec, pe.xtilt, pe.xtilt)
             updateBitmapAndInvalidate()
         },
         onEnd = { pe ->
-            bridge.strokeTo(pe.x, pe.y, pe.pressure, pe.deltaTimeSec, pe.tilt, pe.tilt)
+            bridge.strokeTo(pe.x, pe.y, pe.pressure, pe.deltaTimeSec, pe.xtilt, pe.xtilt)
             bridge.endStroke()
             updateBitmapAndInvalidate()
         }

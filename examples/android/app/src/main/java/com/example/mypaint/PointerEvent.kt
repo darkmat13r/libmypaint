@@ -10,7 +10,8 @@ data class PointerEvent(
     val x: Float,
     val y: Float,
     val pressure: Float,
-    val tilt: Float,         // radians, or NaN if not available
+    val xtilt: Float,         // radians, or NaN if not available
+    val ytilt: Float,         // radians, or NaN if not available
     val orientation: Float,  // radians, or NaN if not available
     val azimuth: Float,      // radians, or NaN if not available
     val timestampNs: Long,

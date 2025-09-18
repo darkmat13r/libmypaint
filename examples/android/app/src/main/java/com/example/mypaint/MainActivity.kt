@@ -69,7 +69,7 @@ private fun MyPaintScreen() {
         })
     }
 
-    var drawingView by remember { mutableStateOf<DrawingView?>(null) }
+    var drawingView by remember { mutableStateOf<GLDrawingView?>(null) }
     var brushSize by remember { mutableFloatStateOf(8f) }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -83,7 +83,7 @@ private fun MyPaintScreen() {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
-                    DrawingView(ctx).also { dv ->
+                    GLDrawingView(ctx).also { dv ->
                         drawingView = dv
                         dv.setBrushSize(brushSize)
                     }

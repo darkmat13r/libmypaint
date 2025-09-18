@@ -14,9 +14,19 @@ class TouchEventManager(
     private val onEnd: (PointerEvent) -> Unit,
 ) {
     private var lastEventTimeNs: Long = 0L
+    private var lastMappedX: Float? = null
+    private var lastMappedY: Float? = null
+    private var lastPressure: Float? = null
+    private var lastXTilt: Float? = null
+    private var lastYTilt: Float? = null
 
     fun reset() {
         lastEventTimeNs = 0L
+        lastMappedX = null
+        lastMappedY = null
+        lastPressure = null
+        lastXTilt = null
+        lastYTilt = null
     }
 
     /**
@@ -33,6 +43,15 @@ class TouchEventManager(
             MotionEvent.ACTION_DOWN -> {
                 val mapped = mapper(ev.x, ev.y) ?: return false
                 lastEventTimeNs = ev.eventTimeNanos
+                // Update last mapped/cache
+                lastMappedX = mapped.first
+                lastMappedY = mapped.second
+                lastPressure = ev.pressure.coerceIn(0f, 1f)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val tilt = ev.getAxisValue(MotionEvent.AXIS_TILT)
+                    lastXTilt = tilt
+                    lastYTilt = tilt
+                }
                 val pe = buildPointerEvent(ev, mapped.first, mapped.second, lastEventTimeNs, 1f / 60f)
                 onStart(pe)
                 return true
@@ -46,6 +65,15 @@ class TouchEventManager(
                     val tMs = ev.getHistoricalEventTime(i)
                     val tNs = tMs * 1_000_000L
                     val dt = computeDt(tNs)
+                    // Update caches
+                    lastMappedX = mapped.first
+                    lastMappedY = mapped.second
+                    lastPressure = ev.getHistoricalPressure(i).coerceIn(0f, 1f)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        val tilt = ev.getHistoricalAxisValue(MotionEvent.AXIS_TILT, 0, i)
+                        lastXTilt = tilt
+                        lastYTilt = tilt
+                    }
                     val pe = buildPointerEvent(ev, mapped.first, mapped.second, tNs, dt, historicalIndex = i)
                     onMove(pe)
                     lastEventTimeNs = tNs
@@ -53,22 +81,48 @@ class TouchEventManager(
                 val mapped = mapper(ev.x, ev.y) ?: return false
                 val tNs = ev.eventTimeNanos
                 val dt = computeDt(tNs)
+                // Update caches
+                lastMappedX = mapped.first
+                lastMappedY = mapped.second
+                lastPressure = ev.pressure.coerceIn(0f, 1f)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val tilt = ev.getAxisValue(MotionEvent.AXIS_TILT)
+                    lastXTilt = tilt
+                    lastYTilt = tilt
+                }
                 val pe = buildPointerEvent(ev, mapped.first, mapped.second, tNs, dt)
                 onMove(pe)
                 lastEventTimeNs = tNs
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                val mapped = mapper(ev.x, ev.y)
                 val tNs = ev.eventTimeNanos
                 val dt = computeDt(tNs)
+                val mapped = mapper(ev.x, ev.y)
                 if (mapped != null) {
+                    // Normal case: inside view; update cache and emit mapped coords
+                    lastMappedX = mapped.first
+                    lastMappedY = mapped.second
+                    lastPressure = ev.pressure.coerceIn(0f, 1f)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        val tilt = ev.getAxisValue(MotionEvent.AXIS_TILT)
+                        lastXTilt = tilt
+                        lastYTilt = tilt
+                    }
                     val pe = buildPointerEvent(ev, mapped.first, mapped.second, tNs, dt)
                     onEnd(pe)
                 } else {
-                    // still signal end with last known metrics
-                    val pe = buildPointerEvent(ev, ev.x, ev.y, tNs, dt)
-                    onEnd(pe)
+                    // Fallback: if finger lifted outside, reuse last mapped coords if available
+                    val lx = lastMappedX
+                    val ly = lastMappedY
+                    if (lx != null && ly != null) {
+                        val pe = buildPointerEvent(ev, lx, ly, tNs, dt)
+                        onEnd(pe)
+                    } else {
+                        // No valid prior point; ignore
+                        reset()
+                        return false
+                    }
                 }
                 reset()
                 return true
@@ -105,7 +159,8 @@ class TouchEventManager(
             x = xMapped,
             y = yMapped,
             pressure = pressure.coerceIn(0f, 1f),
-            tilt = tilt,
+            xtilt = tilt,
+            ytilt = tilt,
             orientation = orientation,
             azimuth = azimuth,
             timestampNs = timestampNs,
